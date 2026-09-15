@@ -27,9 +27,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Add hosts to /etc/hosts
-        if: ${{ secrets.REGISTRY_HOSTIP != '' }}
+        env:
+          REGISTRY_HOSTIP: ${{ secrets.REGISTRY_HOSTIP }}
+          REGISTRY_HOSTNAME: ${{ secrets.REGISTRY_HOSTNAME }}
+        if: ${{ env.REGISTRY_HOSTIP != '' }}
         run: |
-          echo "${{ secrets.REGISTRY_HOSTIP }} ${{ secrets.REGISTRY_HOSTNAME }}" | sudo tee -a /etc/hosts
+          echo "${REGISTRY_HOSTIP} ${REGISTRY_HOSTNAME}" | sudo tee -a /etc/hosts
           cat /etc/hosts
 
       - name: Set up Docker Buildx
