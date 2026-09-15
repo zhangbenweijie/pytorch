@@ -3,14 +3,11 @@
 # ============================================================
 # LLaVA-v1.5 Research Environment
 #
-# Linux x86_64 / Python 3.10 / PyTorch 2.1.2 / CUDA 11.8
-# cuDNN 8
+# Linux x86_64 / Python 3.10
+# PyTorch 2.1.2 / CUDA 11.8 / cuDNN 8
 #
 # Environment only:
-# - No LLaVA source code
-# - No model weights
-# - No datasets
-# - No personal/cloud paths
+# No LLaVA source code, model weights or datasets.
 # ============================================================
 
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
@@ -29,10 +26,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 ENV PATH=/opt/venv/bin:/usr/local/cuda/bin:${PATH}
 
-# Preserve LD_LIBRARY_PATH provided by the NVIDIA base image.
+# Preserve the NVIDIA base image's LD_LIBRARY_PATH.
 
 # ------------------------------------------------------------
-# 2. System tools and isolated Python 3.10 environment
+# 2. System tools and Python 3.10
 # ------------------------------------------------------------
 
 RUN test "$(uname -m)" = "x86_64" \
@@ -62,7 +59,7 @@ RUN test "$(uname -m)" = "x86_64" \
     && git lfs install --system
 
 # ------------------------------------------------------------
-# 3. Python build tools
+# 3. Python packaging tools
 # ------------------------------------------------------------
 
 RUN python -m pip install \
@@ -72,10 +69,8 @@ RUN python -m pip install \
     packaging==23.2
 
 # ------------------------------------------------------------
-# 4. Embedded version constraints
-#
-# No additional local file is required.
-# These constraints also apply to later pip installs.
+# 4. Embedded dependency constraints
+# No separate constraints.txt file is required.
 # ------------------------------------------------------------
 
 COPY <<'EOF' /opt/llava-constraints.txt
@@ -132,7 +127,11 @@ EOF
 ENV PIP_CONSTRAINT=/opt/llava-constraints.txt
 
 # ------------------------------------------------------------
-# 5. Install CUDA 11.8 PyTorch explicitly
+# 5. Install PyTorch
+#
+# PyPI provides general dependencies such as requests.
+# The PyTorch index provides the CUDA 11.8 wheels.
+# Exact +cu118 pins prevent selecting another PyTorch build.
 # ------------------------------------------------------------
 
 RUN python -m pip install \
@@ -141,13 +140,14 @@ RUN python -m pip install \
     && python -m pip install \
         torch==2.1.2+cu118 \
         torchvision==0.16.2+cu118 \
-        --index-url https://download.pytorch.org/whl/cu118
+        --index-url https://pypi.org/simple \
+        --extra-index-url https://download.pytorch.org/whl/cu118
 
 # ------------------------------------------------------------
-# 6. Install core, training and evaluation dependencies
+# 6. Core, training and evaluation dependencies
 #
-# Resolve dependencies together under the constraints.
-# DeepSpeed CUDA ops will be compiled on demand at runtime.
+# DeepSpeed ops are compiled on demand at runtime.
+# The version constraints prevent upgrading PyTorch.
 # ------------------------------------------------------------
 
 RUN DS_BUILD_OPS=0 python -m pip install \
@@ -156,7 +156,7 @@ RUN DS_BUILD_OPS=0 python -m pip install \
     "markdown2[all]"
 
 # ------------------------------------------------------------
-# 7. Verify versions AFTER installing dependencies
+# 7. Verify versions after dependency installation
 # ------------------------------------------------------------
 
 RUN python - <<'PY'
@@ -180,40 +180,29 @@ assert sys.version_info[:2] == (3, 10), sys.version
 assert torch.__version__ == "2.1.2+cu118", torch.__version__
 assert torch.version.cuda == "11.8", torch.version.cuda
 assert re.search(r"release 11\.8\b", nvcc), nvcc
-
-# The official wheel below uses the old C++ ABI.
 assert not torch._C._GLIBCXX_USE_CXX11_ABI, \
     "FlashAttention wheel ABI mismatch"
 PY
 
 # ------------------------------------------------------------
-# 8. FlashAttention official prebuilt wheel
+# 8. Official FlashAttention prebuilt wheel
 #
-# Matches:
-# - Linux x86_64
-# - CPython 3.10
-# - PyTorch 2.1
-# - CUDA 11.8
-# - CXX11 ABI = FALSE
-#
-# --no-deps prevents this step from replacing PyTorch.
-# Required dependencies were installed above.
+# Linux x86_64 / Python 3.10 / Torch 2.1 / CUDA 11.8
+# Avoid compiling FlashAttention on the CI runner.
 # ------------------------------------------------------------
 
 RUN python -m pip install --no-deps \
     "https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.5/flash_attn-2.5.5+cu118torch2.1cxx11abiFALSE-cp310-cp310-linux_x86_64.whl"
 
 # ------------------------------------------------------------
-# 9. Validate dependency consistency
+# 9. Dependency consistency check
 # ------------------------------------------------------------
 
 RUN python -m pip check
 
 # ------------------------------------------------------------
-# 10. Validate imports and final versions
-#
-# No GPU is required for these build-time checks.
-# GPU execution must be tested on the target machine.
+# 10. Final import checks
+# These checks do not require a GPU during docker build.
 # ------------------------------------------------------------
 
 RUN python - <<'PY'
@@ -227,7 +216,7 @@ assert torch.__version__ == "2.1.2+cu118", torch.__version__
 assert torch.version.cuda == "11.8", torch.version.cuda
 assert flash_attn.__version__ == "2.5.5", flash_attn.__version__
 
-modules = (
+for name in (
     "torchvision",
     "transformers",
     "accelerate",
@@ -243,9 +232,7 @@ modules = (
     "cv2",
     "wandb",
     "tensorboard",
-)
-
-for name in modules:
+):
     importlib.import_module(name)
     print("IMPORT OK:", name)
 
