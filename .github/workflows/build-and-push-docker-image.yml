@@ -2,13 +2,8 @@ name: Create and publish a Docker image
 
 on:
   release:
-    types: [published]
-  push:
-    branches:
-      - "**"
-  pull_request:
-    branches:
-      - "**"
+    types:
+      - published
 
 permissions:
   contents: read
@@ -19,18 +14,19 @@ concurrency:
 
 jobs:
   build-and-push-image:
-    name: Push Docker image to Docker Hub
+    name: Build and push Docker image to Harbor
     runs-on: ubuntu-latest
+    timeout-minutes: 180
 
     steps:
-      - name: Check out the repo
+      - name: Check out the repository
         uses: actions/checkout@v4
 
-      - name: Add hosts to /etc/hosts
+      - name: Add Harbor hostname to /etc/hosts
         env:
           REGISTRY_HOSTIP: ${{ secrets.REGISTRY_HOSTIP }}
           REGISTRY_HOSTNAME: ${{ secrets.REGISTRY_HOSTNAME }}
-        if: ${{ env.REGISTRY_HOSTIP != '' }}
+        if: ${{ env.REGISTRY_HOSTIP != '' && env.REGISTRY_HOSTNAME != '' }}
         run: |
           echo "${REGISTRY_HOSTIP} ${REGISTRY_HOSTNAME}" | sudo tee -a /etc/hosts
           cat /etc/hosts
@@ -38,33 +34,39 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        if: github.event_name == 'release'
+      - name: Log in to Harbor
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.REGISTRY_HOSTNAME || 'docker.io' }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Docker metadata
+      - name: Generate Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ secrets.REGISTRY_HOSTNAME || 'docker.io' }}/${{ github.event_name == 'pull_request' && github.event.pull_request.user.login || secrets.REGISTRY_USERNAME }}/${{ secrets.REGISTRY_REPONAME || github.event.repository.name }}
-          flavor: |
-            latest=auto
+            ${{ secrets.REGISTRY_HOSTNAME || 'docker.io' }}/${{ secrets.REGISTRY_USERNAME }}/${{ secrets.REGISTRY_REPONAME || github.event.repository.name }}
           tags: |
             type=ref,event=tag
-            type=ref,event=branch
-            type=ref,event=pr
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=${{ github.event.repository.name }}
+            org.opencontainers.image.description=LLaVA-v1.5 research environment
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.event.release.tag_name }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker Schema 2 image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name == 'release' }}
+          file: ./Dockerfile
+          platforms: linux/amd64
           pull: true
-          no-cache: true
+          provenance: false
+          sbom: false
+          outputs: |
+            type=image,push=true,oci-mediatypes=false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
