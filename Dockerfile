@@ -4,7 +4,7 @@
 # Environment only: no source code, weights, or datasets.
 # ============================================================
 
-FROM pytorch/pytorch:2.1.2-cuda11.8-cudnn8-devel
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
 # ------------------------------------------------------------
 # Basic environment
@@ -19,11 +19,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     MAX_JOBS=2
 
 # ------------------------------------------------------------
-# System tools
+# System tools and Python 3.10
 # ------------------------------------------------------------
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    ca-certificates \
     curl \
     ffmpeg \
     git \
@@ -32,6 +33,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     nano \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python-is-python3 \
     tmux \
     unzip \
     vim \
@@ -52,23 +57,29 @@ RUN python -m pip install --no-cache-dir --upgrade \
     packaging
 
 # ------------------------------------------------------------
-# Verify CUDA toolkit and PyTorch CUDA version.
-# Both must be CUDA 11.8 before FlashAttention is compiled.
+# Install CUDA 11.8 PyTorch explicitly
+# ------------------------------------------------------------
+
+RUN python -m pip install --no-cache-dir \
+    torch==2.1.2 \
+    torchvision==0.16.2 \
+    --index-url https://download.pytorch.org/whl/cu118
+
+# ------------------------------------------------------------
+# Verify CUDA toolkit and PyTorch CUDA version
 # ------------------------------------------------------------
 
 RUN nvcc --version \
     && python -c "import torch; \
-assert torch.__version__ == '2.1.2', torch.__version__; \
+assert torch.__version__.split('+')[0] == '2.1.2', torch.__version__; \
 assert torch.version.cuda == '11.8', torch.version.cuda; \
 print(f'torch={torch.__version__}, torch_cuda={torch.version.cuda}')"
 
 # ------------------------------------------------------------
 # LLaVA core dependencies
-# Matches LLaVA pyproject.toml.
 # ------------------------------------------------------------
 
-RUN pip install --no-cache-dir \
-    torchvision==0.16.2 \
+RUN python -m pip install --no-cache-dir \
     transformers==4.37.2 \
     tokenizers==0.15.1 \
     sentencepiece==0.1.99 \
@@ -91,20 +102,19 @@ RUN pip install --no-cache-dir \
     timm==0.6.13
 
 # ------------------------------------------------------------
-# Training dependencies
+# LLaVA training dependencies
 # ------------------------------------------------------------
 
-RUN pip install --no-cache-dir \
+RUN python -m pip install --no-cache-dir \
     deepspeed==0.12.6 \
     ninja \
     wandb
 
 # ------------------------------------------------------------
 # FlashAttention
-# Pin version compatible with PyTorch 2.1.x / CUDA 11.8.
 # ------------------------------------------------------------
 
-RUN pip install --no-cache-dir \
+RUN python -m pip install --no-cache-dir \
     flash-attn==2.5.5 \
     --no-build-isolation
 
@@ -112,21 +122,21 @@ RUN pip install --no-cache-dir \
 # CV, scientific computing, evaluation, and experiment tools
 # ------------------------------------------------------------
 
-RUN pip install --no-cache-dir \
-    opencv-python \
-    pillow \
-    scipy \
-    pandas \
-    matplotlib \
-    tqdm \
+RUN python -m pip install --no-cache-dir \
     datasets \
-    pycocotools \
+    matplotlib \
     nltk \
+    opencv-python \
     openpyxl \
-    tensorboard
+    pandas \
+    pillow \
+    pycocotools \
+    scipy \
+    tensorboard \
+    tqdm
 
 # ------------------------------------------------------------
-# Final dependency validation
+# Final validation
 # ------------------------------------------------------------
 
 RUN python -c "import torch, flash_attn; \
