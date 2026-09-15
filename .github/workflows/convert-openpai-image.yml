@@ -1,0 +1,68 @@
+name: Convert image for OpenPAI
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Source image tag
+        required: true
+        default: latest
+      target_tag:
+        description: OpenPAI-compatible target tag
+        required: true
+        default: openpai
+
+permissions:
+  contents: read
+
+jobs:
+  convert-image:
+    name: Convert image to Docker Schema 2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Log in to Harbor
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" |
+            skopeo login \
+              --username "${{ secrets.REGISTRY_USERNAME }}" \
+              --password-stdin \
+              "${{ secrets.REGISTRY_HOSTNAME }}"
+
+      - name: Convert existing image
+        env:
+          REGISTRY_HOSTNAME: ${{ secrets.REGISTRY_HOSTNAME }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_REPONAME: ${{ secrets.REGISTRY_REPONAME }}
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          TARGET_TAG: ${{ inputs.target_tag }}
+        run: |
+          SOURCE_IMAGE="${REGISTRY_HOSTNAME}/${REGISTRY_USERNAME}/${REGISTRY_REPONAME}:${SOURCE_TAG}"
+          TARGET_IMAGE="${REGISTRY_HOSTNAME}/${REGISTRY_USERNAME}/${REGISTRY_REPONAME}:${TARGET_TAG}"
+
+          echo "Source: ${SOURCE_IMAGE}"
+          echo "Target: ${TARGET_IMAGE}"
+
+          skopeo copy \
+            --format v2s2 \
+            --override-os linux \
+            --override-arch amd64 \
+            "docker://${SOURCE_IMAGE}" \
+            "docker://${TARGET_IMAGE}"
+
+      - name: Verify converted manifest
+        env:
+          REGISTRY_HOSTNAME: ${{ secrets.REGISTRY_HOSTNAME }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_REPONAME: ${{ secrets.REGISTRY_REPONAME }}
+          TARGET_TAG: ${{ inputs.target_tag }}
+        run: |
+          TARGET_IMAGE="${REGISTRY_HOSTNAME}/${REGISTRY_USERNAME}/${REGISTRY_REPONAME}:${TARGET_TAG}"
+
+          skopeo inspect --raw "docker://${TARGET_IMAGE}" |
+            python3 -c "import json,sys; data=json.load(sys.stdin); print('mediaType:', data.get('mediaType')); assert data.get('mediaType') == 'application/vnd.docker.distribution.manifest.v2+json'"
