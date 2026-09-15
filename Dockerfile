@@ -1,86 +1,72 @@
 # ============================================================
-# MLLM / LLaVA Research Environment
-#
-# Environment only:
-#   - NO LLaVA source code
-#   - NO model weights
-#   - NO datasets
-#   - NO personal/cloud paths
-#
-# Target:
-#   LLaVA-v1.5
-#   Inference / Evaluation
-#   Stage-1 Pretraining (Feature Alignment)
-#   Stage-2 Visual Instruction Tuning
-#   LoRA Fine-tuning
-#
-# Python : 3.10
-# PyTorch: 2.1.2
-# CUDA   : 11.8
-# cuDNN  : 8
+# LLaVA-v1.5 Research Environment
+# Python 3.10 / PyTorch 2.1.2 / CUDA 11.8 / cuDNN 8
+# Environment only: no source code, weights, or datasets.
 # ============================================================
 
-
-# ------------------------------------------------------------
-# 1. Base image
-# ------------------------------------------------------------
 FROM pytorch/pytorch:2.1.2-cuda11.8-cudnn8-devel
 
+# ------------------------------------------------------------
+# Basic environment
+# ------------------------------------------------------------
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    TOKENIZERS_PARALLELISM=false \
+    PYTHONUNBUFFERED=1 \
+    MAX_JOBS=2
 
 # ------------------------------------------------------------
-# 2. Basic environment variables
+# System tools
 # ------------------------------------------------------------
-ENV DEBIAN_FRONTEND=noninteractive
-ENV CUDA_HOME=/usr/local/cuda
-ENV PATH=/usr/local/cuda/bin:${PATH}
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
-ENV TOKENIZERS_PARALLELISM=false
-ENV PYTHONUNBUFFERED=1
 
-
-# ------------------------------------------------------------
-# 3. Linux tools
-# ------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    ffmpeg \
     git \
     git-lfs \
-    wget \
-    curl \
-    vim \
-    nano \
-    tmux \
     htop \
-    zip \
-    unzip \
-    ffmpeg \
-    build-essential \
     libgl1 \
     libglib2.0-0 \
+    nano \
+    tmux \
+    unzip \
+    vim \
+    wget \
+    zip \
     && rm -rf /var/lib/apt/lists/*
 
-
-# ------------------------------------------------------------
-# 4. Git LFS
-# ------------------------------------------------------------
 RUN git lfs install
 
+# ------------------------------------------------------------
+# Python packaging tools
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------
-# 5. Python packaging tools
-# ------------------------------------------------------------
 RUN python -m pip install --no-cache-dir --upgrade \
     pip \
     setuptools \
     wheel \
     packaging
 
+# ------------------------------------------------------------
+# Verify CUDA toolkit and PyTorch CUDA version.
+# Both must be CUDA 11.8 before FlashAttention is compiled.
+# ------------------------------------------------------------
+
+RUN nvcc --version \
+    && python -c "import torch; \
+assert torch.__version__ == '2.1.2', torch.__version__; \
+assert torch.version.cuda == '11.8', torch.version.cuda; \
+print(f'torch={torch.__version__}, torch_cuda={torch.version.cuda}')"
 
 # ------------------------------------------------------------
-# 6. LLaVA core dependencies
-#
-# Based on official LLaVA pyproject.toml.
-# torch is already provided by the base image.
+# LLaVA core dependencies
+# Matches LLaVA pyproject.toml.
 # ------------------------------------------------------------
+
 RUN pip install --no-cache-dir \
     torchvision==0.16.2 \
     transformers==4.37.2 \
@@ -104,72 +90,50 @@ RUN pip install --no-cache-dir \
     einops-exts==0.0.4 \
     timm==0.6.13
 
+# ------------------------------------------------------------
+# Training dependencies
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------
-# 7. LLaVA training dependencies
-#
-# Official [train] dependencies:
-#   deepspeed
-#   ninja
-#   wandb
-# ------------------------------------------------------------
 RUN pip install --no-cache-dir \
     deepspeed==0.12.6 \
     ninja \
     wandb
 
+# ------------------------------------------------------------
+# FlashAttention
+# Pin version compatible with PyTorch 2.1.x / CUDA 11.8.
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------
-# 8. FlashAttention
-#
-# Required/recommended by official LLaVA training setup.
-# The "devel" base image provides nvcc for CUDA compilation.
-# ------------------------------------------------------------
 RUN pip install --no-cache-dir \
-    flash-attn \
+    flash-attn==2.5.5 \
     --no-build-isolation
 
+# ------------------------------------------------------------
+# CV, scientific computing, evaluation, and experiment tools
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------
-# 9. Common CV / scientific computing tools
-# ------------------------------------------------------------
 RUN pip install --no-cache-dir \
     opencv-python \
     pillow \
     scipy \
     pandas \
     matplotlib \
-    tqdm
-
-
-# ------------------------------------------------------------
-# 10. Dataset / evaluation tools
-#
-# Useful for COCO / hallucination evaluation / data processing.
-# ------------------------------------------------------------
-RUN pip install --no-cache-dir \
+    tqdm \
     datasets \
     pycocotools \
     nltk \
-    openpyxl
-
-
-# ------------------------------------------------------------
-# 11. Experiment monitoring
-# ------------------------------------------------------------
-RUN pip install --no-cache-dir \
+    openpyxl \
     tensorboard
 
+# ------------------------------------------------------------
+# Final dependency validation
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------
-# 12. Clean pip cache
-# ------------------------------------------------------------
-RUN rm -rf /root/.cache/pip
+RUN python -c "import torch, flash_attn; \
+print(f'torch={torch.__version__}'); \
+print(f'torch_cuda={torch.version.cuda}'); \
+print(f'flash_attn={flash_attn.__version__}')" \
+    && pip check \
+    && rm -rf /root/.cache/pip
 
-
-# ------------------------------------------------------------
-# 13. Default command
-#
-# No project-specific WORKDIR is specified.
-# ------------------------------------------------------------
 CMD ["/bin/bash"]
