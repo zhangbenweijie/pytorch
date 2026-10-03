@@ -1,245 +1,42 @@
-# syntax=docker/dockerfile:1
-
-# ============================================================
-# LLaVA-v1.5 Research Environment
-#
-# Linux x86_64 / Python 3.10
-# PyTorch 2.1.2 / CUDA 11.8 / cuDNN 8
-#
-# Environment only:
-# No LLaVA source code, model weights or datasets.
-# ============================================================
-
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
-# ------------------------------------------------------------
-# 1. Basic environment
-# ------------------------------------------------------------
-
 ENV DEBIAN_FRONTEND=noninteractive \
-    CUDA_HOME=/usr/local/cuda \
-    TOKENIZERS_PARALLELISM=false \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
-    MAX_JOBS=2
+    PYTHONUNBUFFERED=1
 
-ENV PATH=/opt/venv/bin:/usr/local/cuda/bin:${PATH}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.9 \
+    python3.9-dev \
+    python3-pip \
+    git \
+    wget \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Preserve the NVIDIA base image's LD_LIBRARY_PATH.
+RUN python3.9 -m pip install --upgrade pip setuptools wheel
 
-# ------------------------------------------------------------
-# 2. System tools and Python 3.10
-# ------------------------------------------------------------
+RUN python3.9 -m pip install \
+    torch==2.0.1 \
+    torchvision==0.15.2 \
+    transformers==4.31.0 \
+    "tokenizers>=0.12.1,<0.14" \
+    sentencepiece==0.1.99 \
+    shortuuid \
+    accelerate==0.21.0 \
+    peft==0.4.0 \
+    bitsandbytes==0.41.0 \
+    numpy \
+    scikit-learn==1.2.2 \
+    gradio==3.35.2 \
+    gradio_client==0.2.9 \
+    requests \
+    httpx==0.24.0 \
+    uvicorn \
+    fastapi \
+    einops==0.6.1 \
+    einops-exts==0.0.4 \
+    timm==0.6.13
 
-RUN test "$(uname -m)" = "x86_64" \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        ca-certificates \
-        curl \
-        ffmpeg \
-        git \
-        git-lfs \
-        htop \
-        libaio-dev \
-        libgl1 \
-        libglib2.0-0 \
-        nano \
-        python3.10 \
-        python3.10-dev \
-        python3.10-venv \
-        tmux \
-        unzip \
-        vim \
-        wget \
-        zip \
-    && rm -rf /var/lib/apt/lists/* \
-    && python3.10 -m venv /opt/venv \
-    && git lfs install --system
-
-# ------------------------------------------------------------
-# 3. Python packaging tools
-# ------------------------------------------------------------
-
-RUN python -m pip install \
-    pip==24.0 \
-    setuptools==69.0.3 \
-    wheel==0.42.0 \
-    packaging==23.2
-
-# ------------------------------------------------------------
-# 4. Embedded dependency constraints
-# No separate constraints.txt file is required.
-# ------------------------------------------------------------
-
-COPY <<'EOF' /opt/llava-constraints.txt
-torch==2.1.2+cu118
-torchvision==0.16.2+cu118
-transformers==4.37.2
-tokenizers==0.15.1
-sentencepiece==0.1.99
-shortuuid==1.0.11
-accelerate==0.21.0
-peft==0.7.1
-bitsandbytes==0.43.1
-huggingface-hub==0.20.3
-safetensors==0.4.2
-numpy==1.26.4
-scipy==1.11.4
-scikit-learn==1.2.2
-pandas==2.1.4
-matplotlib==3.8.2
-pillow==10.2.0
-opencv-python==4.9.0.80
-pydantic==2.6.1
-fastapi==0.109.2
-starlette==0.36.3
-gradio==4.16.0
-gradio-client==0.8.1
-httpx==0.24.0
-uvicorn==0.27.1
-python-multipart==0.0.9
-typer==0.9.0
-click==8.1.7
-markdown2==2.4.13
-requests==2.31.0
-einops==0.6.1
-einops-exts==0.0.4
-timm==0.6.13
-deepspeed==0.12.6
-ninja==1.11.1.1
-psutil==5.9.8
-pynvml==11.5.0
-wandb==0.16.3
-protobuf==4.25.3
-datasets==2.16.1
-pyarrow==14.0.2
-pyarrow-hotfix==0.6
-fsspec==2023.10.0
-pycocotools==2.0.7
-nltk==3.8.1
-openpyxl==3.1.2
-tensorboard==2.15.2
-tqdm==4.66.2
-EOF
-
-ENV PIP_CONSTRAINT=/opt/llava-constraints.txt
-
-# ------------------------------------------------------------
-# 5. Install PyTorch
-#
-# PyPI provides general dependencies such as requests.
-# The PyTorch index provides the CUDA 11.8 wheels.
-# Exact +cu118 pins prevent selecting another PyTorch build.
-# ------------------------------------------------------------
-
-RUN python -m pip install \
-        numpy==1.26.4 \
-        ninja==1.11.1.1 \
-    && python -m pip install \
-        torch==2.1.2+cu118 \
-        torchvision==0.16.2+cu118 \
-        --index-url https://pypi.org/simple \
-        --extra-index-url https://download.pytorch.org/whl/cu118
-
-# ------------------------------------------------------------
-# 6. Core, training and evaluation dependencies
-#
-# DeepSpeed ops are compiled on demand at runtime.
-# The version constraints prevent upgrading PyTorch.
-# ------------------------------------------------------------
-
-RUN DS_BUILD_OPS=0 python -m pip install \
-    --no-build-isolation \
-    -r /opt/llava-constraints.txt \
-    "markdown2[all]"
-
-# ------------------------------------------------------------
-# 7. Verify versions after dependency installation
-# ------------------------------------------------------------
-
-RUN python - <<'PY'
-import re
-import subprocess
-import sys
-
-import torch
-
-nvcc = subprocess.check_output(
-    ["/usr/local/cuda/bin/nvcc", "--version"],
-    text=True,
-)
-
-print(nvcc)
-print("Python:", sys.version)
-print("PyTorch:", torch.__version__)
-print("PyTorch CUDA:", torch.version.cuda)
-
-assert sys.version_info[:2] == (3, 10), sys.version
-assert torch.__version__ == "2.1.2+cu118", torch.__version__
-assert torch.version.cuda == "11.8", torch.version.cuda
-assert re.search(r"release 11\.8\b", nvcc), nvcc
-assert not torch._C._GLIBCXX_USE_CXX11_ABI, \
-    "FlashAttention wheel ABI mismatch"
-PY
-
-# ------------------------------------------------------------
-# 8. Official FlashAttention prebuilt wheel
-#
-# Linux x86_64 / Python 3.10 / Torch 2.1 / CUDA 11.8
-# Avoid compiling FlashAttention on the CI runner.
-# ------------------------------------------------------------
-
-RUN python -m pip install --no-deps \
-    "https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.5/flash_attn-2.5.5+cu118torch2.1cxx11abiFALSE-cp310-cp310-linux_x86_64.whl"
-
-# ------------------------------------------------------------
-# 9. Dependency consistency check
-# ------------------------------------------------------------
-
-RUN python -m pip check
-
-# ------------------------------------------------------------
-# 10. Final import checks
-# These checks do not require a GPU during docker build.
-# ------------------------------------------------------------
-
-RUN python - <<'PY'
-import importlib
-
-import torch
-import flash_attn
-import flash_attn_2_cuda
-
-assert torch.__version__ == "2.1.2+cu118", torch.__version__
-assert torch.version.cuda == "11.8", torch.version.cuda
-assert flash_attn.__version__ == "2.5.5", flash_attn.__version__
-
-for name in (
-    "torchvision",
-    "transformers",
-    "accelerate",
-    "peft",
-    "bitsandbytes",
-    "deepspeed",
-    "gradio",
-    "datasets",
-    "numpy",
-    "scipy",
-    "sklearn",
-    "pandas",
-    "cv2",
-    "wandb",
-    "tensorboard",
-):
-    importlib.import_module(name)
-    print("IMPORT OK:", name)
-
-print("Environment checks passed")
-print("torch:", torch.__version__)
-print("torch CUDA:", torch.version.cuda)
-print("flash_attn:", flash_attn.__version__)
-PY
+WORKDIR /workspace
 
 CMD ["/bin/bash"]
